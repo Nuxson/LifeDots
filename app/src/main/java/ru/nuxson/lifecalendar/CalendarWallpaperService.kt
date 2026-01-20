@@ -59,8 +59,23 @@ class CalendarWallpaperService : WallpaperService() {
         private var visible = false
         private val prefs by lazy { getSharedPreferences("calendar_prefs", Context.MODE_PRIVATE) }
 
+        // Cached preference values
+        private var cachedBgColor = Color.BLACK
+        private var cachedAccentColor = Color.parseColor("#4CAF50")
+        private var cachedFutureColor = Color.parseColor("#222222")
+        private var cachedTextColor = Color.WHITE
+        private var cachedCalendarType = CalendarType.MONTH
+        private var cachedBirthDateStr = "2000-01-01"
+        private var cachedLifeExpectancy = 80
+        private var cachedScale = 1.0f
+        private var cachedOffsetX = 0.5f
+        private var cachedOffsetY = 0.5f
+        private var cachedShowTitle = true
+        private var cachedShowStats = true
+
         override fun onCreate(surfaceHolder: SurfaceHolder?) {
             super.onCreate(surfaceHolder)
+            updateCaches()
             prefs.registerOnSharedPreferenceChangeListener(this)
         }
 
@@ -69,7 +84,35 @@ class CalendarWallpaperService : WallpaperService() {
             super.onDestroy()
         }
 
+        private fun updateCaches() {
+            cachedBgColor = Color.parseColor(prefs.getString("bg_color", "#000000"))
+            cachedAccentColor = Color.parseColor(prefs.getString("accent_color", "#4CAF50"))
+            cachedFutureColor = Color.parseColor(prefs.getString("future_color", "#222222"))
+            cachedTextColor = Color.parseColor(prefs.getString("text_color", "#FFFFFF"))
+            
+            val typeStr = prefs.getString("calendar_type", CalendarType.MONTH.name) ?: CalendarType.MONTH.name
+            cachedCalendarType = try { CalendarType.valueOf(typeStr) } catch(e: Exception) { CalendarType.MONTH }
+            
+            cachedBirthDateStr = prefs.getString("birth_date", "2000-01-01") ?: "2000-01-01"
+            cachedLifeExpectancy = prefs.getInt("life_expectancy", 80)
+            cachedScale = prefs.getFloat("scale", 1.0f)
+            cachedOffsetX = prefs.getFloat("offset_x", 0.5f)
+            cachedOffsetY = prefs.getFloat("offset_y", 0.5f)
+            cachedShowTitle = prefs.getBoolean("show_title", true)
+            cachedShowStats = prefs.getBoolean("show_stats", true)
+            
+            // Update paint colors
+            titlePaint.color = cachedTextColor
+            miniLabelPaint.color = cachedTextColor
+            sideLabelPaint.color = cachedTextColor
+            accentPaint.color = cachedAccentColor
+            secondaryPaint.color = cachedTextColor
+            livedDayPaint.color = cachedAccentColor
+            futureDayPaint.color = cachedFutureColor
+        }
+
         override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
+            updateCaches()
             draw()
         }
 
@@ -96,43 +139,21 @@ class CalendarWallpaperService : WallpaperService() {
         }
 
         private fun drawCalendar(canvas: Canvas) {
-            val bgColor = Color.parseColor(prefs.getString("bg_color", "#000000"))
-            val accentColor = Color.parseColor(prefs.getString("accent_color", "#4CAF50"))
-            val futureColor = Color.parseColor(prefs.getString("future_color", "#222222"))
-            val textColor = Color.parseColor(prefs.getString("text_color", "#FFFFFF"))
-            val calendarTypeStr = prefs.getString("calendar_type", CalendarType.MONTH.name) ?: CalendarType.MONTH.name
-            val calendarType = try { CalendarType.valueOf(calendarTypeStr) } catch(e: Exception) { CalendarType.MONTH }
-            val birthDateStr = prefs.getString("birth_date", "2000-01-01") ?: "2000-01-01"
-            val lifeExpectancy = prefs.getInt("life_expectancy", 80)
-            
-            val scale = prefs.getFloat("scale", 1.0f)
-            val offsetX = prefs.getFloat("offset_x", 0.5f)
-            val offsetY = prefs.getFloat("offset_y", 0.5f)
-
-            canvas.drawColor(bgColor)
+            canvas.drawColor(cachedBgColor)
             
             val width = canvas.width.toFloat()
             val height = canvas.height.toFloat()
 
             canvas.save()
-            // Applying offset and scale relative to center
-            canvas.translate((offsetX - 0.5f) * width, (offsetY - 0.5f) * height)
-            canvas.scale(scale, scale, width / 2f, height / 2f)
-
-            titlePaint.color = textColor
-            miniLabelPaint.color = textColor
-            sideLabelPaint.color = textColor
-            accentPaint.color = accentColor
-            secondaryPaint.color = textColor
-            livedDayPaint.color = accentColor
-            futureDayPaint.color = futureColor
+            canvas.translate((cachedOffsetX - 0.5f) * width, (cachedOffsetY - 0.5f) * height)
+            canvas.scale(cachedScale, cachedScale, width / 2f, height / 2f)
 
             val today = LocalDate.now()
             
-            when (calendarType) {
+            when (cachedCalendarType) {
                 CalendarType.MONTH -> drawMonthView(canvas, today, width, height)
                 CalendarType.YEAR -> drawYearView(canvas, today, width, height)
-                CalendarType.LIFE -> drawLifeView(canvas, today, width, height, birthDateStr, lifeExpectancy)
+                CalendarType.LIFE -> drawLifeView(canvas, today, width, height, cachedBirthDateStr, cachedLifeExpectancy)
             }
             canvas.restore()
         }
@@ -149,8 +170,10 @@ class CalendarWallpaperService : WallpaperService() {
             val startX = (width - (6 * dotSpacing)) / 2
             val gridStartY = height * 0.35f
 
-            val monthName = month.getDisplayName(TextStyle.FULL, Locale("ru")).uppercase()
-            canvas.drawText(monthName, startX, gridStartY - 100f, titlePaint)
+            if (cachedShowTitle) {
+                val monthName = month.getDisplayName(TextStyle.FULL, Locale("ru")).uppercase()
+                canvas.drawText(monthName, startX, gridStartY - 100f, titlePaint)
+            }
 
             var lastY = gridStartY
             for (day in 1..daysInMonth) {
@@ -168,8 +191,10 @@ class CalendarWallpaperService : WallpaperService() {
                 canvas.drawCircle(dx, dy, dotRadius, paint)
             }
 
-            val progress = (today.dayOfMonth.toFloat() / daysInMonth * 100).toInt()
-            drawStatsLine(canvas, startX, lastY + dotSpacing * 1.2f, "$progress%", " ПРОЖИТО  •  ", "${daysInMonth - today.dayOfMonth}", " ДНЕЙ ОСТАЛОСЬ")
+            if (cachedShowStats) {
+                val progress = (today.dayOfMonth.toFloat() / daysInMonth * 100).toInt()
+                drawStatsLine(canvas, startX, lastY + dotSpacing * 1.2f, "$progress%", " ПРОЖИТО  •  ", "${daysInMonth - today.dayOfMonth}", " ДНЕЙ ОСТАЛОСЬ")
+            }
         }
 
         private fun drawYearView(canvas: Canvas, today: LocalDate, width: Float, height: Float) {
@@ -185,7 +210,9 @@ class CalendarWallpaperService : WallpaperService() {
             val startX_global = (width - gridWidth) / 2
             val startY_global = (height - gridHeight) / 2
 
-            canvas.drawText("$year ГОД", startX_global, startY_global - 80f, titlePaint)
+            if (cachedShowTitle) {
+                canvas.drawText("$year ГОД", startX_global, startY_global - 80f, titlePaint)
+            }
 
             for (m in 0 until 12) {
                 val col = m % 3
@@ -216,10 +243,12 @@ class CalendarWallpaperService : WallpaperService() {
                 }
             }
             
-            val dayOfYear = today.dayOfYear
-            val totalDays = if (java.time.Year.isLeap(year.toLong())) 366 else 365
-            val progress = (dayOfYear.toFloat() / totalDays * 100).toInt()
-            drawStatsLine(canvas, startX_global, startY_global + gridHeight + 40f, "$progress%", " ГОДА ПРОШЛО  •  ", "${totalDays - dayOfYear}", " ДНЕЙ ОСТАЛОСЬ")
+            if (cachedShowStats) {
+                val dayOfYear = today.dayOfYear
+                val totalDays = if (java.time.Year.isLeap(year.toLong())) 366 else 365
+                val progress = (dayOfYear.toFloat() / totalDays * 100).toInt()
+                drawStatsLine(canvas, startX_global, startY_global + gridHeight + 40f, "$progress%", " ГОДА ПРОШЛО  •  ", "${totalDays - dayOfYear}", " ДНЕЙ ОСТАЛОСЬ")
+            }
         }
 
         private fun drawLifeView(canvas: Canvas, today: LocalDate, width: Float, height: Float, birthDateStr: String, lifeExpectancy: Int) {
@@ -232,7 +261,9 @@ class CalendarWallpaperService : WallpaperService() {
             val startX = width * 0.12f
             val startY = height * 0.2f
             
-            canvas.drawText("КАЛЕНДАРЬ ЖИЗНИ", startX, startY - 80f, titlePaint)
+            if (cachedShowTitle) {
+                canvas.drawText("КАЛЕНДАРЬ ЖИЗНИ", startX, startY - 80f, titlePaint)
+            }
 
             for (week in 0 until totalWeeks) {
                 val dx = startX + (week % 104 * dotSpacing)
@@ -246,9 +277,11 @@ class CalendarWallpaperService : WallpaperService() {
                 canvas.drawCircle(dx, dy, dotRadius, paint)
             }
 
-            val progress = (weeksLived.toFloat() / totalWeeks * 100).toInt()
-            val remainingWeeks = totalWeeks - weeksLived
-            drawStatsLine(canvas, startX, height * 0.95f, "$progress%", " ЖИЗНИ  •  ", "$remainingWeeks", " НЕДЕЛЬ ОСТАЛОСЬ")
+            if (cachedShowStats) {
+                val progress = (weeksLived.toFloat() / totalWeeks * 100).toInt()
+                val remainingWeeks = totalWeeks - weeksLived
+                drawStatsLine(canvas, startX, height * 0.95f, "$progress%", " ЖИЗНИ  •  ", "$remainingWeeks", " НЕДЕЛЬ ОСТАЛОСЬ")
+            }
         }
 
         private fun drawStatsLine(canvas: Canvas, startX: Float, y: Float, val1: String, lab1: String, val2: String, lab2: String) {
@@ -260,11 +293,6 @@ class CalendarWallpaperService : WallpaperService() {
             canvas.drawText(val2, x, y, accentPaint)
             x += accentPaint.measureText(val2)
             canvas.drawText(lab2, x, y, secondaryPaint)
-        }
-
-        private fun isColorDark(color: Int): Boolean {
-            val darkness = 1 - (0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)) / 255
-            return darkness >= 0.5
         }
     }
 }
