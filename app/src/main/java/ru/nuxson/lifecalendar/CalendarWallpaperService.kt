@@ -1,6 +1,7 @@
 package ru.nuxson.lifecalendar
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -17,7 +18,7 @@ class CalendarWallpaperService : WallpaperService() {
         return CalendarEngine()
     }
 
-    inner class CalendarEngine : Engine() {
+    inner class CalendarEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
         private val titlePaint = Paint().apply {
             textSize = 70f
             textAlign = Paint.Align.LEFT
@@ -56,6 +57,21 @@ class CalendarWallpaperService : WallpaperService() {
         private val todayPaint = Paint().apply { color = Color.RED; isAntiAlias = true }
 
         private var visible = false
+        private val prefs by lazy { getSharedPreferences("calendar_prefs", Context.MODE_PRIVATE) }
+
+        override fun onCreate(surfaceHolder: SurfaceHolder?) {
+            super.onCreate(surfaceHolder)
+            prefs.registerOnSharedPreferenceChangeListener(this)
+        }
+
+        override fun onDestroy() {
+            prefs.unregisterOnSharedPreferenceChangeListener(this)
+            super.onDestroy()
+        }
+
+        override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
+            draw()
+        }
 
         override fun onVisibilityChanged(visible: Boolean) {
             this.visible = visible
@@ -80,37 +96,45 @@ class CalendarWallpaperService : WallpaperService() {
         }
 
         private fun drawCalendar(canvas: Canvas) {
-            val prefs = getSharedPreferences("calendar_prefs", Context.MODE_PRIVATE)
             val bgColor = Color.parseColor(prefs.getString("bg_color", "#000000"))
             val accentColor = Color.parseColor(prefs.getString("accent_color", "#4CAF50"))
             val futureColor = Color.parseColor(prefs.getString("future_color", "#222222"))
+            val textColor = Color.parseColor(prefs.getString("text_color", "#FFFFFF"))
             val calendarTypeStr = prefs.getString("calendar_type", CalendarType.MONTH.name) ?: CalendarType.MONTH.name
             val calendarType = try { CalendarType.valueOf(calendarTypeStr) } catch(e: Exception) { CalendarType.MONTH }
             val birthDateStr = prefs.getString("birth_date", "2000-01-01") ?: "2000-01-01"
             val lifeExpectancy = prefs.getInt("life_expectancy", 80)
+            
+            val scale = prefs.getFloat("scale", 1.0f)
+            val offsetX = prefs.getFloat("offset_x", 0.5f)
+            val offsetY = prefs.getFloat("offset_y", 0.5f)
 
             canvas.drawColor(bgColor)
             
-            val isDark = isColorDark(bgColor)
-            val secondaryColor = if (isDark) Color.GRAY else Color.DKGRAY
-            
-            titlePaint.color = futureColor
-            miniLabelPaint.color = futureColor
-            sideLabelPaint.color = futureColor
+            val width = canvas.width.toFloat()
+            val height = canvas.height.toFloat()
+
+            canvas.save()
+            // Applying offset and scale relative to center
+            canvas.translate((offsetX - 0.5f) * width, (offsetY - 0.5f) * height)
+            canvas.scale(scale, scale, width / 2f, height / 2f)
+
+            titlePaint.color = textColor
+            miniLabelPaint.color = textColor
+            sideLabelPaint.color = textColor
             accentPaint.color = accentColor
-            secondaryPaint.color = futureColor
+            secondaryPaint.color = textColor
             livedDayPaint.color = accentColor
             futureDayPaint.color = futureColor
 
             val today = LocalDate.now()
-            val width = canvas.width.toFloat()
-            val height = canvas.height.toFloat()
             
             when (calendarType) {
                 CalendarType.MONTH -> drawMonthView(canvas, today, width, height)
                 CalendarType.YEAR -> drawYearView(canvas, today, width, height)
                 CalendarType.LIFE -> drawLifeView(canvas, today, width, height, birthDateStr, lifeExpectancy)
             }
+            canvas.restore()
         }
 
         private fun drawMonthView(canvas: Canvas, today: LocalDate, width: Float, height: Float) {
@@ -151,7 +175,6 @@ class CalendarWallpaperService : WallpaperService() {
         private fun drawYearView(canvas: Canvas, today: LocalDate, width: Float, height: Float) {
             val year = today.year
             
-            // Compact Year view
             val mWidth = width / 3.5f
             val mHeight = height * 0.12f
             val dotSpacing = mWidth / 8.5f
@@ -209,7 +232,7 @@ class CalendarWallpaperService : WallpaperService() {
             val startX = width * 0.12f
             val startY = height * 0.2f
             
-            canvas.drawText("КАЛЕНДАРЬ ЖИЗНИ ($lifeExpectancy ЛЕТ)", startX, startY - 80f, titlePaint)
+            canvas.drawText("КАЛЕНДАРЬ ЖИЗНИ", startX, startY - 80f, titlePaint)
 
             for (week in 0 until totalWeeks) {
                 val dx = startX + (week % 104 * dotSpacing)
