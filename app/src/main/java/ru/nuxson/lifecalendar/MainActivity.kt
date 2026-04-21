@@ -6,7 +6,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Paint
-import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -19,10 +18,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.RestartAlt
@@ -38,11 +39,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.json.JSONArray
+import org.json.JSONObject
 import ru.nuxson.lifecalendar.ui.theme.LifeCalendarTheme
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.time.format.TextStyle
-import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 enum class CalendarType { MONTH, YEAR, LIFE }
@@ -68,6 +69,7 @@ fun MainScreen() {
     var accentColor by remember { mutableStateOf(prefs.getString("accent_color", "#4CAF50") ?: "#4CAF50") }
     var bgColor by remember { mutableStateOf(prefs.getString("bg_color", "#000000") ?: "#000000") }
     var futureColor by remember { mutableStateOf(prefs.getString("future_color", "#222222") ?: "#222222") }
+    var weekendColor by remember { mutableStateOf(prefs.getString("weekend_color", "#FF5252") ?: "#FF5252") }
     var textColor by remember { mutableStateOf(prefs.getString("text_color", "#FFFFFF") ?: "#FFFFFF") }
     var calendarType by remember { 
         mutableStateOf(CalendarType.valueOf(prefs.getString("calendar_type", CalendarType.MONTH.name) ?: CalendarType.MONTH.name)) 
@@ -81,8 +83,14 @@ fun MainScreen() {
 
     var showTitle by remember { mutableStateOf(prefs.getBoolean("show_title", true)) }
     var showStats by remember { mutableStateOf(prefs.getBoolean("show_stats", true)) }
+    var showDates by remember { mutableStateOf(prefs.getBoolean("show_dates", false)) }
+    var showDayNames by remember { mutableStateOf(prefs.getBoolean("show_day_names", true)) }
+
+    var eventsJson by remember { mutableStateOf(prefs.getString("events", "[]") ?: "[]") }
+    val events = remember(eventsJson) { parseEvents(eventsJson) }
 
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showAddEventDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -129,7 +137,33 @@ fun MainScreen() {
                     .background(parseColorSafe(bgColor, Color.Black)),
                 contentAlignment = Alignment.Center
             ) {
-                CalendarPreview(accentColor, bgColor, futureColor, textColor, calendarType, birthDateStr, lifeExpectancy.toInt(), scale, offsetX, offsetY, showTitle, showStats)
+                val drawParams = CalendarDrawParams(
+                    accentColor = android.graphics.Color.parseColor(accentColor),
+                    bgColor = android.graphics.Color.parseColor(bgColor),
+                    futureColor = android.graphics.Color.parseColor(futureColor),
+                    weekendColor = android.graphics.Color.parseColor(weekendColor),
+                    textColor = android.graphics.Color.parseColor(textColor),
+                    birthDateStr = birthDateStr,
+                    lifeExpectancy = lifeExpectancy,
+                    scale = scale,
+                    offsetX = offsetX,
+                    offsetY = offsetY,
+                    showTitle = showTitle,
+                    showStats = showStats,
+                    showDates = showDates,
+                    showDayNames = showDayNames
+                )
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    CalendarRenderer.draw(
+                        drawContext.canvas.nativeCanvas,
+                        size.width,
+                        size.height,
+                        calendarType,
+                        LocalDate.now(),
+                        drawParams,
+                        events
+                    )
+                }
             }
 
             Surface(
@@ -178,27 +212,62 @@ fun MainScreen() {
 
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Элементы отображения", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Показывать заголовки")
-                            Switch(checked = showTitle, onCheckedChange = { 
-                                showTitle = it
-                                prefs.edit().putBoolean("show_title", it).apply()
-                            })
+                        ToggleRow("Показывать заголовки", showTitle) {
+                            showTitle = it
+                            prefs.edit().putBoolean("show_title", it).apply()
                         }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Показывать статистику")
-                            Switch(checked = showStats, onCheckedChange = { 
-                                showStats = it
-                                prefs.edit().putBoolean("show_stats", it).apply()
-                            })
+                        ToggleRow("Показывать статистику", showStats) {
+                            showStats = it
+                            prefs.edit().putBoolean("show_stats", it).apply()
+                        }
+                        ToggleRow("Отображать даты на точках", showDates) {
+                            showDates = it
+                            prefs.edit().putBoolean("show_dates", it).apply()
+                        }
+                        if (calendarType == CalendarType.MONTH) {
+                            ToggleRow("Дни недели (ПН-ВС)", showDayNames) {
+                                showDayNames = it
+                                prefs.edit().putBoolean("show_day_names", it).apply()
+                            }
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Важные события", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            IconButton(onClick = { showAddEventDialog = true }) {
+                                Icon(Icons.Default.Add, contentDescription = "Добавить событие")
+                            }
+                        }
+                        
+                        if (events.isEmpty()) {
+                            Text("Событий пока нет", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                events.forEach { event ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(modifier = Modifier.size(16.dp).clip(RoundedCornerShape(4.dp)).background(Color(event.color)))
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column {
+                                                Text(event.label ?: "Событие", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                                                Text(event.date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")), style = MaterialTheme.typography.labelMedium)
+                                            }
+                                        }
+                                        IconButton(onClick = {
+                                            val newEvents = events.filter { it != event }
+                                            eventsJson = serializeEvents(newEvents)
+                                            prefs.edit().putString("events", eventsJson).apply()
+                                        }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -213,11 +282,7 @@ fun MainScreen() {
                                 scale = 1.0f
                                 offsetX = 0.5f
                                 offsetY = 0.5f
-                                prefs.edit()
-                                    .putFloat("scale", 1.0f)
-                                    .putFloat("offset_x", 0.5f)
-                                    .putFloat("offset_y", 0.5f)
-                                    .apply()
+                                prefs.edit().putFloat("scale", 1.0f).putFloat("offset_x", 0.5f).putFloat("offset_y", 0.5f).apply()
                             }) {
                                 Icon(Icons.Default.RestartAlt, contentDescription = "Сброс")
                             }
@@ -252,21 +317,18 @@ fun MainScreen() {
                             
                             Spacer(modifier = Modifier.height(8.dp))
                             Text("Ожидаемая продолжительность: ${lifeExpectancy.toInt()} лет", style = MaterialTheme.typography.titleSmall)
-                            Slider(
-                                value = lifeExpectancy,
-                                onValueChange = { 
-                                    lifeExpectancy = it
-                                    prefs.edit().putInt("life_expectancy", it.toInt()).apply()
-                                },
-                                valueRange = 50f..120f,
-                                steps = 70
-                            )
+                            Slider(value = lifeExpectancy, onValueChange = { lifeExpectancy = it; prefs.edit().putInt("life_expectancy", it.toInt()).apply() }, valueRange = 50f..120f, steps = 70)
                         }
                     }
 
-                    ColorPickerSection("Акцент (Прогресс)", accentColor) {
+                    ColorPickerSection("Акцент (Прошедшие)", accentColor) {
                         accentColor = it
                         prefs.edit().putString("accent_color", it).apply()
+                    }
+
+                    ColorPickerSection("Выходные", weekendColor) {
+                        weekendColor = it
+                        prefs.edit().putString("weekend_color", it).apply()
                     }
 
                     ColorPickerSection("Фон", bgColor) {
@@ -290,6 +352,38 @@ fun MainScreen() {
         }
     }
 
+    if (showAddEventDialog) {
+        var eventDate by remember { mutableStateOf(LocalDate.now()) }
+        var eventLabel by remember { mutableStateOf("") }
+        var eventColor by remember { mutableStateOf("#F44336") }
+        
+        AlertDialog(
+            onDismissRequest = { showAddEventDialog = false },
+            title = { Text("Новое событие") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    OutlinedTextField(value = eventLabel, onValueChange = { eventLabel = it }, label = { Text("Название") }, singleLine = true)
+                    OutlinedButton(onClick = {
+                        DatePickerDialog(context, { _, y, m, d -> eventDate = LocalDate.of(y, m + 1, d) }, eventDate.year, eventDate.monthValue - 1, eventDate.dayOfMonth).show()
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text(eventDate.format(DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale("ru"))))
+                    }
+                    ColorPickerSection("Цвет события", eventColor) { eventColor = it }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val newEvent = CalendarEvent(eventDate, android.graphics.Color.parseColor(eventColor), eventLabel)
+                    val newEvents = events + newEvent
+                    eventsJson = serializeEvents(newEvents)
+                    prefs.edit().putString("events", eventsJson).apply()
+                    showAddEventDialog = false
+                }) { Text("Добавить") }
+            },
+            dismissButton = { TextButton(onClick = { showAddEventDialog = false }) { Text("Отмена") } }
+        )
+    }
+
     if (showAboutDialog) {
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
@@ -299,178 +393,55 @@ fun MainScreen() {
                     Text("Автор: Nuxson")
                     Text("Это приложение помогает визуализировать время и ценить каждый момент жизни.")
                     Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Nuxson/Life365"))
-                            context.startActivity(intent)
-                        },
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
+                    TextButton(onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Nuxson/Life365"))
+                        context.startActivity(intent)
+                    }, contentPadding = PaddingValues(0.dp)) {
                         Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Исходный код на GitHub")
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showAboutDialog = false }) {
-                    Text("Закрыть")
-                }
-            }
+            confirmButton = { TextButton(onClick = { showAboutDialog = false }) { Text("Закрыть") } }
         )
     }
 }
 
 @Composable
-fun CalendarPreview(accentHex: String, bgHex: String, futureHex: String, textHex: String, type: CalendarType, birthDateStr: String, lifeExpectancy: Int, scale: Float, offsetX: Float, offsetY: Float, showTitle: Boolean, showStats: Boolean) {
-    val today = LocalDate.now()
-    
-    // Reuse paint objects to reduce allocations during recomposition/re-renders
-    val titlePaint = remember { Paint().apply { textAlign = Paint.Align.LEFT; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD } }
-    val miniLabelPaint = remember { Paint().apply { textAlign = Paint.Align.LEFT; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD } }
-    val sideLabelPaint = remember { Paint().apply { textAlign = Paint.Align.RIGHT; isAntiAlias = true } }
-    val accentPaint = remember { Paint().apply { textAlign = Paint.Align.LEFT; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD } }
-    val labelPaint = remember { Paint().apply { textAlign = Paint.Align.LEFT; isAntiAlias = true } }
-    val livedDayPaint = remember { Paint().apply { isAntiAlias = true } }
-    val futureDayPaint = remember { Paint().apply { isAntiAlias = true } }
-    val todayPaint = remember { Paint().apply { color = android.graphics.Color.RED; isAntiAlias = true } }
-
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val canvas = drawContext.canvas.nativeCanvas
-        val width = size.width
-        val height = size.height
-
-        canvas.save()
-        canvas.translate((offsetX - 0.5f) * width, (offsetY - 0.5f) * height)
-        canvas.scale(scale, scale, width / 2f, height / 2f)
-
-        val accentColor = android.graphics.Color.parseColor(accentHex)
-        val futureColor = android.graphics.Color.parseColor(futureHex)
-        val textColor = android.graphics.Color.parseColor(textHex)
-
-        titlePaint.apply { color = textColor; textSize = 45f }
-        miniLabelPaint.apply { color = textColor; textSize = 18f }
-        sideLabelPaint.apply { color = textColor; textSize = 16f }
-        accentPaint.apply { color = accentColor; textSize = 28f }
-        labelPaint.apply { color = textColor; textSize = 24f }
-        livedDayPaint.color = accentColor
-        futureDayPaint.color = futureColor
-
-        when (type) {
-            CalendarType.MONTH -> {
-                val month = today.month
-                val firstDayOfMonth = LocalDate.of(today.year, month, 1)
-                val daysInMonth = month.length(firstDayOfMonth.isLeapYear)
-                val dayOfWeekOffset = firstDayOfMonth.dayOfWeek.value - 1
-                val dotSpacing = width / 8.5f
-                val dotRadius = dotSpacing / 3.2f
-                val gridStartY = height * 0.35f
-                val startX = (width - (6 * dotSpacing)) / 2
-                
-                if (showTitle) {
-                    canvas.drawText(month.getDisplayName(TextStyle.FULL, Locale("ru")).uppercase(), startX, gridStartY - 100f, titlePaint)
-                }
-                
-                var lastY = gridStartY
-                for (day in 1..daysInMonth) {
-                    val dayIdx = day + dayOfWeekOffset - 1
-                    val dx = startX + (dayIdx % 7 * dotSpacing)
-                    val dy = gridStartY + (dayIdx / 7 * dotSpacing)
-                    lastY = dy
-                    val date = LocalDate.of(today.year, month, day)
-                    val paint = when { date.isBefore(today) -> livedDayPaint; date.isEqual(today) -> todayPaint; else -> futureDayPaint }
-                    canvas.drawCircle(dx, dy, dotRadius, paint)
-                }
-                
-                if (showStats) {
-                    val progress = (today.dayOfMonth.toFloat() / daysInMonth * 100).toInt()
-                    drawStatsLine(canvas, startX, lastY + dotSpacing * 1.2f, "$progress%", " ПРОЖИТО  •  ", "${daysInMonth - today.dayOfMonth}", " ДНЕЙ ОСТАЛОСЬ", accentPaint, labelPaint)
-                }
-            }
-            CalendarType.YEAR -> {
-                val mWidth = width / 3.5f
-                val mHeight = height * 0.12f
-                val dotSpacing = mWidth / 8.5f
-                val dotRadius = dotSpacing / 3.8f
-                val gridWidth = mWidth * 3
-                val gridHeight = mHeight * 4
-                val startX_global = (width - gridWidth) / 2
-                val startY_global = (height - gridHeight) / 2
-                
-                if (showTitle) {
-                    canvas.drawText("${today.year} ГОД", startX_global, startY_global - 80f, titlePaint)
-                }
-                
-                for (m in 0 until 12) {
-                    val col = m % 3; val row = m / 3
-                    val startX = col * mWidth + startX_global; val startY = row * mHeight + startY_global
-                    val month = java.time.Month.of(m + 1)
-                    
-                    if (showTitle) {
-                        canvas.drawText(month.getDisplayName(TextStyle.SHORT, Locale("ru")).uppercase(), startX, startY - 15f, miniLabelPaint)
-                    }
-                    
-                    val firstDay = LocalDate.of(today.year, m + 1, 1)
-                    val offset = firstDay.dayOfWeek.value - 1
-                    for (day in 1..month.length(firstDay.isLeapYear)) {
-                        val dIdx = day + offset - 1
-                        val dx = startX + (dIdx % 7 * dotSpacing); val dy = startY + (dIdx / 7 * dotSpacing)
-                        val date = LocalDate.of(today.year, m + 1, day)
-                        val paint = when { date.isBefore(today) -> livedDayPaint; date.isEqual(today) -> todayPaint; else -> futureDayPaint }
-                        canvas.drawCircle(dx, dy, dotRadius, paint)
-                    }
-                }
-                
-                if (showStats) {
-                    val totalDays = if (java.time.Year.isLeap(today.year.toLong())) 366 else 365
-                    val progress = (today.dayOfYear.toFloat() / totalDays * 100).toInt()
-                    drawStatsLine(canvas, startX_global, startY_global + gridHeight + 40f, "$progress%", " ГОДА ПРОШЛО  •  ", "${totalDays - today.dayOfYear}", " ДНЕЙ ОСТАЛОСЬ", accentPaint, labelPaint)
-                }
-            }
-            CalendarType.LIFE -> {
-                val birthDate = LocalDate.parse(birthDateStr)
-                val totalWeeks = lifeExpectancy * 52
-                val weeksLived = ChronoUnit.WEEKS.between(birthDate, today).toInt()
-                val dotSpacing = (width - width * 0.2f) / 105f
-                val dotRadius = dotSpacing / 2.8f
-                val startX = width * 0.12f
-                val startY = height * 0.2f
-                
-                if (showTitle) {
-                    canvas.drawText("LifeDots", startX, startY - 80f, titlePaint)
-                }
-                
-                for (week in 0 until totalWeeks) {
-                    val dx = startX + (week % 104 * dotSpacing); val dy = startY + (week / 104 * dotSpacing * 1.8f)
-                    if (week % 104 == 0 && (week / 52) % 10 == 0 && showTitle) {
-                        canvas.drawText("${week / 52}", startX - 25f, dy + dotRadius, sideLabelPaint)
-                    }
-                    val paint = if (week < weeksLived) livedDayPaint else if (week == weeksLived) todayPaint else futureDayPaint
-                    canvas.drawCircle(dx, dy, dotRadius, paint)
-                }
-                
-                if (showStats) {
-                    val progress = (weeksLived.toFloat() / totalWeeks * 100).toInt()
-                    drawStatsLine(canvas, startX, startY + (lifeExpectancy / 2 + 2) * dotSpacing * 1.8f + 40f, "$progress%", " ЖИЗНИ  •  ", "${totalWeeks - weeksLived}", " НЕДЕЛЬ ОСТАЛОСЬ", accentPaint, labelPaint)
-                }
-            }
-        }
-        canvas.restore()
+fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(label)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
-private fun drawStatsLine(canvas: android.graphics.Canvas, startX: Float, y: Float, val1: String, lab1: String, val2: String, lab2: String, accent: Paint, label: Paint) {
-    var x = startX
-    canvas.drawText(val1, x, y, accent); x += accent.measureText(val1)
-    canvas.drawText(lab1, x, y, label); x += label.measureText(lab1)
-    canvas.drawText(val2, x, y, accent); x += accent.measureText(val2)
-    canvas.drawText(lab2, x, y, label)
+private fun parseEvents(json: String): List<CalendarEvent> {
+    return try {
+        val arr = JSONArray(json)
+        List(arr.length()) { i ->
+            val obj = arr.getJSONObject(i)
+            CalendarEvent(LocalDate.parse(obj.getString("date")), obj.getInt("color"), obj.optString("label"))
+        }
+    } catch (e: Exception) { emptyList() }
+}
+
+private fun serializeEvents(events: List<CalendarEvent>): String {
+    val arr = JSONArray()
+    events.forEach { event ->
+        val obj = JSONObject()
+        obj.put("date", event.date.toString())
+        obj.put("color", event.color)
+        obj.put("label", event.label)
+        arr.put(obj)
+    }
+    return arr.toString()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ColorPickerSection(title: String, selectedColor: String, onColorSelected: (String) -> Unit) {
-    val colors = listOf("#4CAF50", "#2196F3", "#F44336", "#FFC107", "#E91E63", "#9C27B0", "#673AB7", "#00BCD4", "#009688", "#FF9688", "#795548", "#607D8B", "#000000", "#1A1A1A", "#333333", "#FFFFFF")
+    val colors = listOf("#4CAF50", "#2196F3", "#F44336", "#FFC107", "#E91E63", "#9C27B0", "#673AB7", "#00BCD4", "#009688", "#FF9688", "#795548", "#607D8B", "#000000", "#FFFFFF")
     var showCustomDialog by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
